@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  projects     Project[]
+}
+
+model Project {
+  id        String     @id @default(uuid())
+  name      String
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  endpoints Endpoint[]
+}
+
+model Endpoint {
+  id        String     @id @default(uuid())
+  projectId String
+  project   Project    @relation(fields: [projectId], references: [id])
+  name      String
+  url       String
+  method    String     @default("GET")
+  testRuns  TestRun[]
+}
+
+model TestRun {
+  id              String    @id @default(uuid())
+  endpointId      String
+  endpoint        Endpoint  @relation(fields: [endpointId], references: [id])
+
+  numRequests     Int
+  requestsPerSec  Int
+  pattern         String    @default("constant")
+  status          String    @default("running")
+
+  totalRequests   Int?
+  successRequests Int?
+  failedRequests  Int?
+  avgLatencyMs    Float?
+  p95LatencyMs    Float?
+  recommendation  String?
+
+  createdAt       DateTime  @default(now())
+}
