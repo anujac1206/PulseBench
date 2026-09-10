@@ -34,21 +34,24 @@ model Endpoint {
 }
 
 model TestRun {
-  id              String    @id @default(uuid())
-  endpointId      String
-  endpoint        Endpoint  @relation(fields: [endpointId], references: [id])
-
-  numRequests     Int
-  requestsPerSec  Int
-  pattern         String    @default("constant")
-  status          String    @default("running")
-
-  totalRequests   Int?
-  successRequests Int?
-  failedRequests  Int?
-  avgLatencyMs    Float?
-  p95LatencyMs    Float?
-  recommendation  String?
-
-  createdAt       DateTime  @default(now())
+  id                String    @id @default(cuid())
+  endpointId        String
+  endpoint          Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  
+  status            String    @default("pending")
+  
+  // TickMetrics fields - MUST match field names exactly
+  sentRequests      Int       @default(0)
+  completedRequests Int       @default(0)
+  successRequests   Int       @default(0)
+  failedRequests    Int       @default(0)
+  timeoutRequests   Int       @default(0)
+  targetRps         Int       @default(0)
+  actualRps         Int       @default(0)
+  avgLatencyMs      Int       @default(0)
+  p95LatencyMs      Int       @default(0)
+  
+  recommendation    String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
 }

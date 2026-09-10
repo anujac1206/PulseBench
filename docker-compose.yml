@@ -15,8 +15,8 @@ services:
     depends_on:
       - postgres
     environment:
-      DATABASE_URL: postgresql://pulsebench:pulsebench@postgres:5432/pulsebench
-      JWT_SECRET: change-me-to-a-long-random-string
+      DATABASE_URL:  ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
       PORT: 4000
       PROMETHEUS_URL: http://prometheus:9090
     ports:

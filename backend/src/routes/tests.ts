@@ -2,10 +2,11 @@ import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { Server } from 'socket.io';
 import { AuthRequest } from '../middleware/auth';
+import { executeLoadTest, TickMetrics } from '../services/loadEngine';
+import { generateRecommendation } from '../services/recommendations';
 
 const prisma = new PrismaClient();
 
-// factory so this route file can emit socket events without a separate module
 export function createTestRoutes(io: Server) {
   const router = Router();
 
@@ -26,9 +27,15 @@ export function createTestRoutes(io: Server) {
     const testRun = await prisma.testRun.create({
       data: {
         endpointId,
-        numRequests,
-        requestsPerSec,
-        pattern: pattern || 'constant',
+        sentRequests: 0,
+        completedRequests: 0,
+        successRequests: 0,
+        failedRequests: 0,
+        timeoutRequests: 0,
+        targetRps: requestsPerSec || 0,
+        actualRps: 0,
+        avgLatencyMs: 0,
+        p95LatencyMs: 0,
         status: 'running',
       },
     });
@@ -44,15 +51,7 @@ export function createTestRoutes(io: Server) {
   return router;
 }
 
-// ---- The load test engine itself ----
-
-interface TickStats {
-  totalRequests: number;
-  successRequests: number;
-  failedRequests: number;
-  avgLatencyMs: number;
-  p95LatencyMs: number;
-}
+// ---- The load test engine runner ----
 
 async function runLoadTest(
   io: Server,
@@ -63,107 +62,64 @@ async function runLoadTest(
   requestsPerSec: number,
   pattern: string
 ) {
-  const latencies: number[] = [];
-  let success = 0;
-  let failed = 0;
-  let sent = 0;
-
   const room = `test:${testId}`;
-  const tickInterval = setInterval(() => emitTick(), 1000);
-
-  function emitTick() {
-    const stats = computeStats(latencies, success, failed);
-    io.to(room).emit('test_tick', stats);
-  }
-
-  async function fireOne() {
-    const start = Date.now();
-    try {
-      const res = await fetch(url, { method: method || 'GET' });
-      latencies.push(Date.now() - start);
-      if (res.ok) success++;
-      else failed++;
-    } catch {
-      latencies.push(Date.now() - start);
-      failed++;
-    }
-    sent++;
-  }
-
-  // Simple pattern logic: constant, ramp, spike all just vary
-  // the delay between requests based on elapsed progress.
-  for (let i = 0; i < numRequests; i++) {
-    const progress = i / numRequests;
-    let currentRate = requestsPerSec;
-
-    if (pattern === 'ramp') {
-      currentRate = Math.max(1, Math.floor(requestsPerSec * progress));
-    } else if (pattern === 'spike') {
-      const inSpike = progress > 0.4 && progress < 0.6;
-      currentRate = inSpike ? requestsPerSec * 3 : requestsPerSec;
-    }
-
-    const delayMs = 1000 / currentRate;
-    await fireOne();
-    await sleep(delayMs);
-  }
-
-  clearInterval(tickInterval);
-
-  const final = computeStats(latencies, success, failed);
-  const recommendation = generateRecommendation(final, success + failed);
-
-  await prisma.testRun.update({
-    where: { id: testId },
-    data: {
-      status: 'completed',
-      totalRequests: success + failed,
-      successRequests: success,
-      failedRequests: failed,
-      avgLatencyMs: final.avgLatencyMs,
-      p95LatencyMs: final.p95LatencyMs,
-      recommendation,
-    },
+  const generator = executeLoadTest({
+    targetUrl: url,
+    method,
+    numRequests,
+    rate: requestsPerSec,
+    concurrencyLimit: 50,
+    pattern,
   });
 
-  io.to(room).emit('test_complete', { ...final, recommendation });
-}
+  let lastStats: TickMetrics | null = null;
 
-function computeStats(latencies: number[], success: number, failed: number): TickStats {
-  const total = success + failed;
-  const avg = latencies.length ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
-  const sorted = [...latencies].sort((a, b) => a - b);
-  const p95Index = Math.floor(sorted.length * 0.95);
-  const p95 = sorted.length ? sorted[Math.min(p95Index, sorted.length - 1)] : 0;
-
-  return {
-    totalRequests: total,
-    successRequests: success,
-    failedRequests: failed,
-    avgLatencyMs: Math.round(avg),
-    p95LatencyMs: Math.round(p95),
-  };
-}
-
-// Simple if/else rule engine - no ML, just thresholds.
-function generateRecommendation(stats: TickStats, totalSent: number): string {
-  const errorRate = totalSent > 0 ? stats.failedRequests / totalSent : 0;
-
-  if (errorRate > 0.2) {
-    return 'High error rate detected (>20%). The endpoint may be rate-limiting requests or is under-provisioned for this load.';
+  try {
+    for await (const stats of generator) {
+      lastStats = stats;
+      
+      // WebSocket emit MUST include all 10 fields
+      io.to(room).emit('test_tick', {
+        sentRequests: stats.sentRequests,
+        completedRequests: stats.completedRequests,
+        successRequests: stats.successRequests,
+        failedRequests: stats.failedRequests,
+        timeoutRequests: stats.timeoutRequests,
+        targetRps: stats.targetRps,
+        actualRps: stats.actualRps,
+        avgLatencyMs: stats.avgLatencyMs,
+        p95LatencyMs: stats.p95LatencyMs,
+        inFlightCount: stats.inFlightCount,
+      });
+    }
+  } catch (err) {
+    console.error(`Error during load test ${testId}:`, err);
   }
-  if (stats.p95LatencyMs > 1000) {
-    return 'P95 latency is high (>1000ms). Consider caching, connection pooling, or scaling the target service.';
-  }
-  if (errorRate > 0.05) {
-    return 'Some requests failed (>5% error rate). Investigate error responses under load.';
-  }
-  if (stats.avgLatencyMs < 200 && errorRate === 0) {
-    return 'The endpoint handled this load well — low latency and no failed requests.';
-  }
-  return 'The endpoint performed acceptably. Consider testing with a higher request rate to find its breaking point.';
-}
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  // Database save MUST map all 10 fields (9 saved to DB)
+  if (lastStats) {
+    const recommendation = generateRecommendation(lastStats);
+
+    await prisma.testRun.update({
+      where: { id: testId },
+      data: {
+        status: 'completed',
+        sentRequests: lastStats.sentRequests,
+        completedRequests: lastStats.completedRequests,
+        successRequests: lastStats.successRequests,
+        failedRequests: lastStats.failedRequests,
+        timeoutRequests: lastStats.timeoutRequests,
+        targetRps: lastStats.targetRps,
+        actualRps: lastStats.actualRps,
+        avgLatencyMs: lastStats.avgLatencyMs,
+        p95LatencyMs: lastStats.p95LatencyMs,
+        recommendation,
+      },
+    });
+
+    io.to(room).emit('test_complete', {
+      ...lastStats,
+      recommendation,
+    });
+  }
 }

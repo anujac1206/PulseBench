@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { TickMetrics } from '../types/metrics';
 import { 
   AreaChart, 
   Area, 
@@ -13,13 +14,8 @@ import {
 } from 'recharts';
 import { Clock, BarChart3, ShieldCheck } from 'lucide-react';
 
-export interface TickPoint {
+export interface TickPoint extends TickMetrics {
   second: number;
-  totalRequests: number;
-  successRequests: number;
-  failedRequests: number;
-  avgLatencyMs: number;
-  p95LatencyMs: number;
 }
 
 interface LiveChartProps {
@@ -31,9 +27,8 @@ type TabType = 'latency' | 'throughput' | 'success_rate';
 export default function LiveChart({ data }: LiveChartProps) {
   const [activeTab, setActiveTab] = useState<TabType>('latency');
 
-  // Format tick data to add computed success rate
   const formattedData = data.map((d) => {
-    const total = d.successRequests + d.failedRequests;
+    const total = d.completedRequests;
     const rate = total > 0 ? Math.round((d.successRequests / total) * 100) : 100;
     return {
       ...d,
@@ -41,7 +36,6 @@ export default function LiveChart({ data }: LiveChartProps) {
     };
   });
 
-  // Custom tooltips matching Grafana/Datadog design
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
@@ -64,7 +58,6 @@ export default function LiveChart({ data }: LiveChartProps) {
 
   return (
     <div className="w-full bg-slate-900/40 backdrop-blur-md border border-slate-800/80 rounded-xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.15)] flex flex-col space-y-4">
-      {/* Tabs / Header Control */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-4">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 bg-cyan-400 rounded-full animate-ping"></span>
@@ -107,7 +100,6 @@ export default function LiveChart({ data }: LiveChartProps) {
         </div>
       </div>
 
-      {/* Chart Canvas */}
       <div className="w-full h-80 min-h-[320px]">
         {data.length === 0 ? (
           <div className="w-full h-full border border-dashed border-slate-800 rounded-lg flex flex-col items-center justify-center text-slate-500 space-y-2">
@@ -119,7 +111,6 @@ export default function LiveChart({ data }: LiveChartProps) {
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             {activeTab === 'latency' ? (
-              // Latency: Area/Line Chart with Avg vs P95
               <AreaChart data={formattedData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorAvg" x1="0" y1="0" x2="0" y2="1">
@@ -132,86 +123,24 @@ export default function LiveChart({ data }: LiveChartProps) {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
-                <XAxis 
-                  dataKey="second" 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  fontFamily="monospace"
-                  tickLine={false}
-                  label={{ value: 'Second', position: 'insideBottomRight', offset: -10, fill: '#64748b', fontSize: 10 }}
-                />
-                <YAxis 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  fontFamily="monospace"
-                  tickLine={false}
-                  unit="ms"
-                />
+                <XAxis dataKey="second" stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} />
+                <YAxis stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} unit="ms" />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
-                <Area 
-                  type="monotone" 
-                  dataKey="avgLatencyMs" 
-                  stroke="#06b6d4" 
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#colorAvg)"
-                  name="Avg Latency" 
-                  unit=" ms"
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="p95LatencyMs" 
-                  stroke="#8b5cf6" 
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#colorP95)"
-                  name="P95 Latency" 
-                  unit=" ms"
-                />
+                <Area type="monotone" dataKey="avgLatencyMs" stroke="#06b6d4" strokeWidth={2} fillOpacity={1} fill="url(#colorAvg)" name="Avg Latency" unit=" ms" />
+                <Area type="monotone" dataKey="p95LatencyMs" stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill="url(#colorP95)" name="P95 Latency" unit=" ms" />
               </AreaChart>
             ) : activeTab === 'throughput' ? (
-              // Throughput: Multi Line chart with Success vs Failed requests
               <LineChart data={formattedData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
-                <XAxis 
-                  dataKey="second" 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  fontFamily="monospace"
-                  tickLine={false}
-                  label={{ value: 'Second', position: 'insideBottomRight', offset: -10, fill: '#64748b', fontSize: 10 }}
-                />
-                <YAxis 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  fontFamily="monospace"
-                  tickLine={false}
-                  unit="req"
-                />
+                <XAxis dataKey="second" stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} />
+                <YAxis stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} unit="req" />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
-                <Line 
-                  type="monotone" 
-                  dataKey="successRequests" 
-                  stroke="#10b981" 
-                  strokeWidth={2}
-                  dot={false}
-                  name="Success Requests" 
-                  unit=" reqs"
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="failedRequests" 
-                  stroke="#ef4444" 
-                  strokeWidth={2}
-                  dot={false}
-                  name="Failed Requests" 
-                  unit=" reqs"
-                />
+                <Line type="monotone" dataKey="successRequests" stroke="#10b981" strokeWidth={2} dot={false} name="Success Requests" unit=" reqs" />
+                <Line type="monotone" dataKey="failedRequests" stroke="#ef4444" strokeWidth={2} dot={false} name="Failed Requests" unit=" reqs" />
               </LineChart>
             ) : (
-              // Success Rate: Single line chart showing success rate percentage
               <AreaChart data={formattedData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorRate" x1="0" y1="0" x2="0" y2="1">
@@ -220,34 +149,11 @@ export default function LiveChart({ data }: LiveChartProps) {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
-                <XAxis 
-                  dataKey="second" 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  fontFamily="monospace"
-                  tickLine={false}
-                  label={{ value: 'Second', position: 'insideBottomRight', offset: -10, fill: '#64748b', fontSize: 10 }}
-                />
-                <YAxis 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  fontFamily="monospace"
-                  tickLine={false}
-                  domain={[0, 100]}
-                  unit="%"
-                />
+                <XAxis dataKey="second" stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} />
+                <YAxis stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} domain={[0, 100]} unit="%" />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
-                <Area 
-                  type="monotone" 
-                  dataKey="successRate" 
-                  stroke="#3b82f6" 
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#colorRate)"
-                  name="Success Rate" 
-                  unit="%"
-                />
+                <Area type="monotone" dataKey="successRate" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorRate)" name="Success Rate" unit="%" />
               </AreaChart>
             )}
           </ResponsiveContainer>

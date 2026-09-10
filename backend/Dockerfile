@@ -18,4 +18,4 @@ RUN npm run build
 
 EXPOSE 4000
 
-CMD ["node", "dist/server.js"]
+CMD ["sh", "-c", "npx prisma db push --schema=src/prisma/schema.prisma --accept-data-loss && node dist/server.js"]
